@@ -929,6 +929,16 @@ body:not(.dark) .card [style*="border-top:1px solid var(--brd)"]{border-top-colo
       <span>📱 Export JSON → Google Drive/iCloud → import on other device</span>
     </div>
   </div>
+  <div class="slbl">Google Sheets Sync</div>
+  <div class="card" style="padding:16px;display:flex;flex-direction:column;gap:10px">
+    <p style="margin:0;font-size:12px;color:var(--txt3);line-height:1.5">Paste your Google Apps Script Web App URL, then use Save/Load to sync across devices without manual file exports.</p>
+    <input type="text" id="sheet-url-input" placeholder="https://script.google.com/macros/s/…/exec" oninput="onSheetUrlChange()" style="width:100%;box-sizing:border-box;padding:10px 12px;border-radius:10px;border:1px solid var(--brd);background:var(--surf2);color:var(--txt);font-size:13px;outline:none">
+    <div id="sheet-sync-status" style="font-size:11px;color:var(--txt3)"></div>
+    <div style="display:flex;gap:8px">
+      <button class="btn primary" style="flex:1" onclick="syncToSheet()">☁️ Save to Sheet</button>
+      <button class="btn" style="flex:1" onclick="syncFromSheet()">⬇️ Load from Sheet</button>
+    </div>
+  </div>
   <div class="slbl">Preferences</div>
   <div class="card" style="padding:0">
     <div class="set-row"><div class="set-info"><h4>Dark Mode</h4><p>Toggle theme</p></div><button class="tog" id="tog-theme" onclick="toggleTheme()"></button></div>
@@ -1806,6 +1816,66 @@ function importJSON(ev){
   r.onload=e=>{try{const imp=JSON.parse(e.target.result);if(!imp.nwHistory||!imp.usAssets)throw new Error('Invalid');if(!imp.passiveByYear)imp.passiveByYear={};if(!imp.salary)imp.salary={hoursDay:8,daysWeek:5,weeksYear:50,abhinav:{base:163770,bonus:16377,rsu:53750,health:0,pto:0,travel:0,k401:0},wife:{base:49980,bonus:0,rsu:0,health:0,pto:0,travel:0,k401:0}};if(!imp.salLog)imp.salLog=[];D=imp;saveAll();renderAll();toast('✅ Imported!','s');}catch(err){toast('Import failed: '+err.message);}ev.target.value='';};
   r.readAsText(f);
 }
+
+// ── GOOGLE SHEETS SYNC ──
+function getSheetUrl(){return (localStorage.getItem('wp_sheet_url')||'').trim();}
+function onSheetUrlChange(){const i=document.getElementById('sheet-url-input');if(i)localStorage.setItem('wp_sheet_url',i.value.trim());}
+function initSheetSync(){
+  const i=document.getElementById('sheet-url-input');if(i)i.value=getSheetUrl();
+  const last=localStorage.getItem('wp_sheet_last_sync');
+  updateSheetStatus(last?`Last synced: ${new Date(last).toLocaleString()}`:'Not synced yet');
+}
+function updateSheetStatus(msg){const el=document.getElementById('sheet-sync-status');if(el)el.textContent=msg;}
+async function syncToSheet(){
+  const url=getSheetUrl();
+  if(!url){toast('Add your Google Sheet URL first');return;}
+  updateSheetStatus('Saving…');
+  try{
+    const res=await fetch(url,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({action:'save',data:D})});
+    const result=await res.json();
+    if(result.status!=='ok')throw new Error(result.message||'Unknown error');
+    const now=new Date().toISOString();
+    localStorage.setItem('wp_sheet_last_sync',now);
+    updateSheetStatus(`Last synced: ${new Date(now).toLocaleString()}`);
+    toast('✓ Saved to Google Sheet','s');
+  }catch(err){
+    console.error(err);
+    updateSheetStatus('Save failed — check URL & connection');
+    toast('Failed to save to Sheet');
+  }
+}
+async function syncFromSheet(){
+  const url=getSheetUrl();
+  if(!url){toast('Add your Google Sheet URL first');return;}
+  if(!confirm("This will replace your current data with what's in the Google Sheet. Continue?"))return;
+  updateSheetStatus('Loading…');
+  try{
+    const sep=url.includes('?')?'&':'?';
+    const res=await fetch(`${url}${sep}action=load`);
+    const result=await res.json();
+    if(result.status!=='ok')throw new Error(result.message||'Unknown error');
+    const imp=result.data;
+    if(!imp||!imp.nwHistory||!imp.usAssets)throw new Error('Sheet has no valid data yet — Save first from a device with your data');
+    if(!imp.passiveByYear)imp.passiveByYear={};
+    if(!imp.salary)imp.salary={hoursDay:8,daysWeek:5,weeksYear:50,abhinav:{base:163770,bonus:16377,rsu:53750,health:0,pto:0,travel:0,k401:0},wife:{base:49980,bonus:0,rsu:0,health:0,pto:0,travel:0,k401:0}};
+    if(!imp.salLog)imp.salLog=[];
+    D=imp;
+    saveAll();
+    const now=new Date().toISOString();
+    localStorage.setItem('wp_sheet_last_sync',now);
+    updateSheetStatus(`Last synced: ${new Date(now).toLocaleString()}`);
+    document.getElementById('fx-rate').value=D.fxRate;
+    document.getElementById('fx-b').textContent='₹'+D.fxRate.toFixed(2);
+    const frs=document.getElementById('fx-rate-s');if(frs)frs.value=D.fxRate;
+    renderAll();
+    toast('✓ Loaded from Google Sheet','s');
+  }catch(err){
+    console.error(err);
+    updateSheetStatus('Load failed — check URL & connection');
+    toast('Failed to load: '+(err.message||err));
+  }
+}
+
 // Auto-save (File System API — Chrome/Edge)
 let _fh=null,_ast=null;
 async function enableAutoSave(){
@@ -1835,6 +1905,7 @@ function renderAll(){
   const frs=document.getElementById('fx-rate-s');if(frs)frs.value=D.fxRate;
   document.getElementById('log-date').value=tod();
   renderHome();
+  initSheetSync();
 })();
 </script>
 </body>
